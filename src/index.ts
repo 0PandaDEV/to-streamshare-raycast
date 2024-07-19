@@ -81,8 +81,8 @@ async function uploadFile(filePath: string) {
 
     await showToast({
       style: Toast.Style.Success,
-      title: "File uploaded successfully",
-      message: "Download URL copied to clipboard",
+      title: "Copied URL to clipboard",
+      message: `${fileName}`,
       primaryAction: {
         title: "Open in Browser",
         onAction: () => open(downloadUrl),
