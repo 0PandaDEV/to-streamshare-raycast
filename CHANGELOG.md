@@ -1,3 +1,4 @@
 # Streamshare Uploader Changelog
 
-## [Initial Version] - 2024-07-19
+## v1.0 - 2024-07-19
+- added upload function
