@@ -1,10 +1,4 @@
-import {
-  showToast,
-  Toast,
-  open,
-  getSelectedFinderItems,
-  Clipboard,
-} from "@raycast/api";
+import { showToast, Toast, open, getSelectedFinderItems, Clipboard } from "@raycast/api";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
@@ -35,26 +29,26 @@ async function uploadFile(filePath: string) {
   const fileSize = fs.statSync(filePath).size;
 
   try {
-    const createResponse = await axios.post('https://streamshare.wireway.ch/api/create', { name: fileName });
+    const createResponse = await axios.post("https://streamshare.wireway.ch/api/create", { name: fileName });
     const { fileIdentifier, deletionToken } = createResponse.data;
 
     const toast = await showToast({
       style: Toast.Style.Animated,
       title: `Uploading ${fileName}`,
-      message: "0%"
+      message: "0%",
     });
 
     const ws = new WebSocket(`wss://streamshare.wireway.ch/api/upload/${fileIdentifier}`);
 
     await new Promise<void>((resolve, reject) => {
-      ws.on('open', async () => {
+      ws.on("open", async () => {
         const fileStream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
         let uploadedSize = 0;
 
         for await (const chunk of fileStream) {
           ws.send(chunk);
           await new Promise<void>((resolveAck) => {
-            ws.once('message', (ack) => {
+            ws.once("message", (ack) => {
               if (ack.toString() !== "ACK") {
                 reject(new Error("Failed to receive ACK"));
               }
@@ -66,11 +60,11 @@ async function uploadFile(filePath: string) {
           toast.message = `${percentCompleted}%`;
         }
 
-        ws.close(1000, 'FILE_UPLOAD_DONE');
+        ws.close(1000, "FILE_UPLOAD_DONE");
         resolve();
       });
 
-      ws.on('error', (error) => {
+      ws.on("error", (error) => {
         reject(error);
       });
     });
@@ -93,12 +87,11 @@ async function uploadFile(filePath: string) {
         onAction: () => Clipboard.copy(deletionUrl),
       },
     });
-
   } catch (error) {
     await showToast({
       title: `Failed to upload ${fileName}`,
       message: error instanceof Error ? error.message : String(error),
-      style: Toast.Style.Failure
+      style: Toast.Style.Failure,
     });
   }
 }
