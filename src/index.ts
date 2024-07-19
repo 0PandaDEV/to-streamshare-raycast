@@ -10,7 +10,7 @@ import path from "path";
 import axios from "axios";
 import WebSocket from "ws";
 
-const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB chunks (matching the Python client)
+const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
 
 export default async function Command() {
   try {
@@ -36,7 +36,7 @@ async function uploadFile(filePath: string) {
 
   try {
     const createResponse = await axios.post('https://streamshare.wireway.ch/api/create', { name: fileName });
-    const { fileIdentifier } = createResponse.data;
+    const { fileIdentifier, deletionToken } = createResponse.data;
 
     const toast = await showToast({
       style: Toast.Style.Animated,
@@ -66,7 +66,7 @@ async function uploadFile(filePath: string) {
           toast.message = `${percentCompleted}%`;
         }
 
-        ws.close();
+        ws.close(1000, 'FILE_UPLOAD_DONE');
         resolve();
       });
 
@@ -76,6 +76,7 @@ async function uploadFile(filePath: string) {
     });
 
     const downloadUrl = `https://streamshare.wireway.ch/download/${fileIdentifier}`;
+    const deletionUrl = `https://streamshare.wireway.ch/api/delete/${fileIdentifier}/${deletionToken}`;
 
     await Clipboard.copy(downloadUrl);
 
@@ -87,10 +88,13 @@ async function uploadFile(filePath: string) {
         title: "Open in Browser",
         onAction: () => open(downloadUrl),
       },
+      secondaryAction: {
+        title: "Copy Deletion URL",
+        onAction: () => Clipboard.copy(deletionUrl),
+      },
     });
 
   } catch (error) {
-    console.error('Upload error:', error);
     await showToast({
       title: `Failed to upload ${fileName}`,
       message: error instanceof Error ? error.message : String(error),
