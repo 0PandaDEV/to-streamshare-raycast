@@ -1,9 +1,16 @@
-import { showToast, Toast, open, getSelectedFinderItems, Clipboard } from "@raycast/api";
+import {
+  showToast,
+  Toast,
+  open,
+  getSelectedFinderItems,
+  Clipboard,
+} from "@raycast/api";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
 import WebSocket from "ws";
 import archiver from "archiver";
+import stream from "stream";
 
 const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
 
@@ -14,11 +21,15 @@ export default async function Command() {
     } catch (error) {
       await showToast({
         title: "Full Disk Access Required",
-        message: "Please grant Full Disk Access to Raycast in System Settings → Privacy & Security",
+        message:
+          "Please grant Full Disk Access to Raycast in System Settings → Privacy & Security",
         style: Toast.Style.Failure,
         primaryAction: {
           title: "Open System Settings",
-          onAction: () => open("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+          onAction: () =>
+            open(
+              "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+            ),
         },
       });
       return;
@@ -29,27 +40,81 @@ export default async function Command() {
       await showToast({ title: "No file selected", style: Toast.Style.Failure });
       return;
     }
-    await uploadFile(selectedItems[0].path);
+
+    const paths = selectedItems.map((item) => item.path);
+    await uploadItems(paths);
   } catch (error) {
     await showToast({ title: "Error selecting file", style: Toast.Style.Failure });
   }
 }
 
-async function uploadFile(filePath: string) {
-  const isDirectory = fs.statSync(filePath).isDirectory();
-  const fileName = path.basename(filePath) + (isDirectory ? ".zip" : "");
+async function uploadItems(filePaths: string[]) {
+  const isMultiple = filePaths.length > 1;
+  const isSingleDirectory =
+    filePaths.length === 1 && fs.statSync(filePaths[0]).isDirectory();
+  const isSingleFile = filePaths.length === 1 && fs.statSync(filePaths[0]).isFile();
+
+  let uploadName = "";
+  let streamToUpload: stream.Readable;
+
+  if (isMultiple) {
+    uploadName = `archive_${Date.now()}.zip`;
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.on("error", (err) => {
+      throw err;
+    });
+    streamToUpload = archive;
+
+    for (const filePath of filePaths) {
+      const name = path.basename(filePath);
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        archive.directory(filePath, name);
+      } else if (stat.isFile()) {
+        archive.file(filePath, { name });
+      }
+    }
+
+    archive.finalize();
+  } else if (isSingleDirectory) {
+    const dirPath = filePaths[0];
+    uploadName = `${path.basename(dirPath)}.zip`;
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.on("error", (err) => {
+      throw err;
+    });
+    streamToUpload = archive;
+    archive.directory(dirPath, false);
+    archive.finalize();
+  } else if (isSingleFile) {
+    const filePath = filePaths[0];
+    uploadName = path.basename(filePath);
+    streamToUpload = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
+  } else {
+    await showToast({
+      title: "Unsupported selection",
+      message: "Selected items could not be processed.",
+      style: Toast.Style.Failure,
+    });
+    return;
+  }
 
   try {
-    const createResponse = await axios.post("https://streamshare.wireway.ch/api/create", { name: fileName });
+    const createResponse = await axios.post(
+      "https://streamshare.wireway.ch/api/create",
+      { name: uploadName }
+    );
     const { fileIdentifier, deletionToken } = createResponse.data;
 
     const toast = await showToast({
       style: Toast.Style.Animated,
-      title: `Uploading ${fileName}`,
-      message: "0%",
+      title: `Uploading ${uploadName}`,
+      message: isMultiple || isSingleDirectory ? "0 MB" : "0%",
     });
 
-    const ws = new WebSocket(`wss://streamshare.wireway.ch/api/upload/${fileIdentifier}`);
+    const ws = new WebSocket(
+      `wss://streamshare.wireway.ch/api/upload/${fileIdentifier}`
+    );
 
     let ackResolve: (() => void) | null = null;
 
@@ -73,50 +138,38 @@ async function uploadFile(filePath: string) {
         let fileSize = 0;
 
         try {
-          if (isDirectory) {
-            const archive = archiver("zip", { zlib: { level: 9 } });
-            archive.directory(filePath, false);
-
-            archive.on("error", (err) => {
-              reject(err);
-              ws.close();
-            });
-
-            archive.finalize();
-
-            archive.on("data", async (chunk) => {
+          if (isMultiple || isSingleDirectory) {
+            for await (const chunk of streamToUpload) {
               ws.send(chunk);
               await ackPromise().catch((err) => {
                 reject(err);
                 ws.close();
               });
               uploadedSize += chunk.length;
-              toast.message = `${(uploadedSize / (1024 * 1024)).toFixed(2)} MB`;
-            });
-
-            archive.on("end", () => {
-              ws.close(1000, "FILE_UPLOAD_DONE");
-              resolve();
-            });
+              toast.message = `${(uploadedSize / (1024 * 1024)).toFixed(
+                2
+              )} MB`;
+            }
           } else {
-            const fileStream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
-            const stat = fs.statSync(filePath);
+            const stat = fs.statSync(filePaths[0]);
             fileSize = stat.size;
 
-            for await (const chunk of fileStream) {
+            for await (const chunk of streamToUpload) {
               ws.send(chunk);
               await ackPromise().catch((err) => {
                 reject(err);
                 ws.close();
               });
               uploadedSize += chunk.length;
-              const percentCompleted = Math.round((uploadedSize * 100) / fileSize);
+              const percentCompleted = Math.round(
+                (uploadedSize * 100) / fileSize
+              );
               toast.message = `${percentCompleted}%`;
             }
-
-            ws.close(1000, "FILE_UPLOAD_DONE");
-            resolve();
           }
+
+          ws.close(1000, "FILE_UPLOAD_DONE");
+          resolve();
         } catch (error) {
           reject(error);
           ws.close();
@@ -138,7 +191,7 @@ async function uploadFile(filePath: string) {
     await showToast({
       style: Toast.Style.Success,
       title: "Copied URL to clipboard",
-      message: `${fileName}`,
+      message: `${uploadName}`,
       primaryAction: {
         title: "Open Download in Browser",
         onAction: () => open(downloadUrl),
@@ -156,7 +209,8 @@ async function uploadFile(filePath: string) {
             await showToast({
               style: Toast.Style.Failure,
               title: "Failed to delete file",
-              message: error instanceof Error ? error.message : String(error),
+              message:
+                error instanceof Error ? error.message : String(error),
             });
           }
         },
@@ -164,7 +218,7 @@ async function uploadFile(filePath: string) {
     });
   } catch (error) {
     await showToast({
-      title: `Failed to upload ${fileName}`,
+      title: `Failed to upload ${uploadName}`,
       message: error instanceof Error ? error.message : String(error),
       style: Toast.Style.Failure,
     });
