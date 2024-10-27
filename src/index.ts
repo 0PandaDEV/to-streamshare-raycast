@@ -3,11 +3,27 @@ import fs from "fs";
 import path from "path";
 import axios from "axios";
 import WebSocket from "ws";
+import archiver from "archiver";
 
 const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
 
 export default async function Command() {
   try {
+    try {
+      fs.accessSync("/Users", fs.constants.R_OK);
+    } catch (error) {
+      await showToast({
+        title: "Full Disk Access Required",
+        message: "Please grant Full Disk Access to Raycast in System Settings → Privacy & Security",
+        style: Toast.Style.Failure,
+        primaryAction: {
+          title: "Open System Settings",
+          onAction: () => open("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+        },
+      });
+      return;
+    }
+
     const selectedItems = await getSelectedFinderItems();
     if (selectedItems.length === 0) {
       await showToast({ title: "No file selected", style: Toast.Style.Failure });
@@ -20,13 +36,8 @@ export default async function Command() {
 }
 
 async function uploadFile(filePath: string) {
-  if (!fs.statSync(filePath).isFile()) {
-    await showToast({ title: "Selected item is not a file", style: Toast.Style.Failure });
-    return;
-  }
-
-  const fileName = path.basename(filePath);
-  const fileSize = fs.statSync(filePath).size;
+  const isDirectory = fs.statSync(filePath).isDirectory();
+  const fileName = path.basename(filePath) + (isDirectory ? ".zip" : "");
 
   try {
     const createResponse = await axios.post("https://streamshare.wireway.ch/api/create", { name: fileName });
@@ -40,34 +51,84 @@ async function uploadFile(filePath: string) {
 
     const ws = new WebSocket(`wss://streamshare.wireway.ch/api/upload/${fileIdentifier}`);
 
+    let ackResolve: (() => void) | null = null;
+
+    const ackPromise = () =>
+      new Promise<void>((resolve) => {
+        ackResolve = resolve;
+      });
+
+    const handleMessage = (ack: WebSocket.Data) => {
+      if (ack.toString() === "ACK" && ackResolve) {
+        ackResolve();
+        ackResolve = null;
+      }
+    };
+
+    ws.on("message", handleMessage);
+
     await new Promise<void>((resolve, reject) => {
       ws.on("open", async () => {
-        const fileStream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
         let uploadedSize = 0;
+        let fileSize = 0;
 
-        for await (const chunk of fileStream) {
-          ws.send(chunk);
-          await new Promise<void>((resolveAck) => {
-            ws.once("message", (ack) => {
-              if (ack.toString() !== "ACK") {
-                reject(new Error("Failed to receive ACK"));
-              }
-              resolveAck();
+        try {
+          if (isDirectory) {
+            const archive = archiver("zip", { zlib: { level: 9 } });
+            archive.directory(filePath, false);
+
+            archive.on("error", (err) => {
+              reject(err);
+              ws.close();
             });
-          });
-          uploadedSize += chunk.length;
-          const percentCompleted = Math.round((uploadedSize * 100) / fileSize);
-          toast.message = `${percentCompleted}%`;
-        }
 
-        ws.close(1000, "FILE_UPLOAD_DONE");
-        resolve();
+            archive.finalize();
+
+            archive.on("data", async (chunk) => {
+              ws.send(chunk);
+              await ackPromise().catch((err) => {
+                reject(err);
+                ws.close();
+              });
+              uploadedSize += chunk.length;
+              toast.message = `${(uploadedSize / (1024 * 1024)).toFixed(2)} MB`;
+            });
+
+            archive.on("end", () => {
+              ws.close(1000, "FILE_UPLOAD_DONE");
+              resolve();
+            });
+          } else {
+            const fileStream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
+            const stat = fs.statSync(filePath);
+            fileSize = stat.size;
+
+            for await (const chunk of fileStream) {
+              ws.send(chunk);
+              await ackPromise().catch((err) => {
+                reject(err);
+                ws.close();
+              });
+              uploadedSize += chunk.length;
+              const percentCompleted = Math.round((uploadedSize * 100) / fileSize);
+              toast.message = `${percentCompleted}%`;
+            }
+
+            ws.close(1000, "FILE_UPLOAD_DONE");
+            resolve();
+          }
+        } catch (error) {
+          reject(error);
+          ws.close();
+        }
       });
 
       ws.on("error", (error) => {
         reject(error);
       });
     });
+
+    ws.off("message", handleMessage);
 
     const downloadUrl = `https://streamshare.wireway.ch/download/${fileIdentifier}`;
     const deletionUrl = `https://streamshare.wireway.ch/api/delete/${fileIdentifier}/${deletionToken}`;
