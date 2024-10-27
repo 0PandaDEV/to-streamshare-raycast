@@ -1,10 +1,4 @@
-import {
-  showToast,
-  Toast,
-  open,
-  getSelectedFinderItems,
-  Clipboard,
-} from "@raycast/api";
+import { showToast, Toast, open, getSelectedFinderItems, Clipboard } from "@raycast/api";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
@@ -21,15 +15,11 @@ export default async function Command() {
     } catch (error) {
       await showToast({
         title: "Full Disk Access Required",
-        message:
-          "Please grant Full Disk Access to Raycast in System Settings → Privacy & Security",
+        message: "Please grant Full Disk Access to Raycast in System Settings → Privacy & Security",
         style: Toast.Style.Failure,
         primaryAction: {
           title: "Open System Settings",
-          onAction: () =>
-            open(
-              "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-            ),
+          onAction: () => open("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
         },
       });
       return;
@@ -50,8 +40,7 @@ export default async function Command() {
 
 async function uploadItems(filePaths: string[]) {
   const isMultiple = filePaths.length > 1;
-  const isSingleDirectory =
-    filePaths.length === 1 && fs.statSync(filePaths[0]).isDirectory();
+  const isSingleDirectory = filePaths.length === 1 && fs.statSync(filePaths[0]).isDirectory();
   const isSingleFile = filePaths.length === 1 && fs.statSync(filePaths[0]).isFile();
 
   let uploadName = "";
@@ -100,10 +89,7 @@ async function uploadItems(filePaths: string[]) {
   }
 
   try {
-    const createResponse = await axios.post(
-      "https://streamshare.wireway.ch/api/create",
-      { name: uploadName }
-    );
+    const createResponse = await axios.post("https://streamshare.wireway.ch/api/create", { name: uploadName });
     const { fileIdentifier, deletionToken } = createResponse.data;
 
     const toast = await showToast({
@@ -112,9 +98,7 @@ async function uploadItems(filePaths: string[]) {
       message: isMultiple || isSingleDirectory ? "0 MB" : "0%",
     });
 
-    const ws = new WebSocket(
-      `wss://streamshare.wireway.ch/api/upload/${fileIdentifier}`
-    );
+    const ws = new WebSocket(`wss://streamshare.wireway.ch/api/upload/${fileIdentifier}`);
 
     let ackResolve: (() => void) | null = null;
 
@@ -146,9 +130,7 @@ async function uploadItems(filePaths: string[]) {
                 ws.close();
               });
               uploadedSize += chunk.length;
-              toast.message = `${(uploadedSize / (1024 * 1024)).toFixed(
-                2
-              )} MB`;
+              toast.message = `${(uploadedSize / (1024 * 1024)).toFixed(2)} MB`;
             }
           } else {
             const stat = fs.statSync(filePaths[0]);
@@ -161,9 +143,7 @@ async function uploadItems(filePaths: string[]) {
                 ws.close();
               });
               uploadedSize += chunk.length;
-              const percentCompleted = Math.round(
-                (uploadedSize * 100) / fileSize
-              );
+              const percentCompleted = Math.round((uploadedSize * 100) / fileSize);
               toast.message = `${percentCompleted}%`;
             }
           }
@@ -209,8 +189,7 @@ async function uploadItems(filePaths: string[]) {
             await showToast({
               style: Toast.Style.Failure,
               title: "Failed to delete file",
-              message:
-                error instanceof Error ? error.message : String(error),
+              message: error instanceof Error ? error.message : String(error),
             });
           }
         },
