@@ -45,6 +45,7 @@ async function uploadItems(filePaths: string[]) {
 
   let uploadName = "";
   let streamToUpload: stream.Readable;
+  let totalSize = 0;
 
   if (isMultiple) {
     uploadName = `archive_${Date.now()}.zip`;
@@ -57,6 +58,7 @@ async function uploadItems(filePaths: string[]) {
     for (const filePath of filePaths) {
       const name = path.basename(filePath);
       const stat = fs.statSync(filePath);
+      totalSize += stat.size;
       if (stat.isDirectory()) {
         archive.directory(filePath, name);
       } else if (stat.isFile()) {
@@ -74,11 +76,30 @@ async function uploadItems(filePaths: string[]) {
     });
     streamToUpload = archive;
     archive.directory(dirPath, false);
+
+    const calculateDirectorySize = (dir: string): number => {
+      let size = 0;
+      const items = fs.readdirSync(dir);
+      for (const item of items) {
+        const itemPath = path.join(dir, item);
+        const stat = fs.statSync(itemPath);
+        if (stat.isDirectory()) {
+          size += calculateDirectorySize(itemPath);
+        } else {
+          size += stat.size;
+        }
+      }
+      return size;
+    };
+    totalSize = calculateDirectorySize(dirPath);
+
     archive.finalize();
   } else if (isSingleFile) {
     const filePath = filePaths[0];
     uploadName = path.basename(filePath);
     streamToUpload = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
+    const stat = fs.statSync(filePath);
+    totalSize = stat.size;
   } else {
     await showToast({
       title: "Unsupported selection",
@@ -95,7 +116,7 @@ async function uploadItems(filePaths: string[]) {
     const toast = await showToast({
       style: Toast.Style.Animated,
       title: `Uploading ${uploadName}`,
-      message: isMultiple || isSingleDirectory ? "0 MB" : "0%",
+      message: "0% - 0 MB",
     });
 
     const ws = new WebSocket(`wss://streamshare.wireway.ch/api/upload/${fileIdentifier}`);
@@ -119,33 +140,19 @@ async function uploadItems(filePaths: string[]) {
     await new Promise<void>((resolve, reject) => {
       ws.on("open", async () => {
         let uploadedSize = 0;
-        let fileSize = 0;
+        const fileSize = totalSize;
 
         try {
-          if (isMultiple || isSingleDirectory) {
-            for await (const chunk of streamToUpload) {
-              ws.send(chunk);
-              await ackPromise().catch((err) => {
-                reject(err);
-                ws.close();
-              });
-              uploadedSize += chunk.length;
-              toast.message = `${(uploadedSize / (1024 * 1024)).toFixed(2)} MB`;
-            }
-          } else {
-            const stat = fs.statSync(filePaths[0]);
-            fileSize = stat.size;
-
-            for await (const chunk of streamToUpload) {
-              ws.send(chunk);
-              await ackPromise().catch((err) => {
-                reject(err);
-                ws.close();
-              });
-              uploadedSize += chunk.length;
-              const percentCompleted = Math.round((uploadedSize * 100) / fileSize);
-              toast.message = `${percentCompleted}%`;
-            }
+          for await (const chunk of streamToUpload) {
+            ws.send(chunk);
+            await ackPromise().catch((err) => {
+              reject(err);
+              ws.close();
+            });
+            uploadedSize += chunk.length;
+            const percentCompleted = fileSize ? ((uploadedSize / fileSize) * 100).toFixed(2) : "0";
+            const uploadedMB = (uploadedSize / (1024 * 1024)).toFixed(2);
+            toast.message = `${percentCompleted}% - ${uploadedMB} MB`;
           }
 
           ws.close(1000, "FILE_UPLOAD_DONE");
