@@ -1,7 +1,7 @@
 {
   "$schema": "https://www.raycast.com/schemas/extension.json",
-  "name": "streamshare-uploader",
-  "title": "Streamshare Uploader",
+  "name": "to-streamshare",
+  "title": "To Streamshare",
   "description": "Upload files to streamshare.",
   "icon": "logo.png",
   "author": "PandaDEV",
@@ -14,7 +14,7 @@
   "commands": [
     {
       "name": "index",
-      "title": "Upload file",
+      "title": "To Streamshare",
       "subtitle": "Upload file to streamshare",
       "description": "Upload a file to streamshare.",
       "mode": "no-view",

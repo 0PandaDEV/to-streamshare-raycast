@@ -4,7 +4,7 @@ import path from "path";
 import axios from "axios";
 import WebSocket from "ws";
 
-const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
+const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
 
 export default async function Command() {
   try {
