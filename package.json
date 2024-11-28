@@ -22,20 +22,20 @@
   ],
   "dependencies": {
     "@raycast/api": "1.86.1",
-    "@types/archiver": "^6.0.3",
+    "@types/archiver": "6.0.3",
     "@types/ws": "8.5.13",
-    "archiver": "^7.0.1",
-    "axios": "^1.7.8",
-    "form-data": "^4.0.1",
-    "ws": "^8.18.0"
+    "archiver": "7.0.1",
+    "axios": "1.7.8",
+    "form-data": "4.0.1",
+    "ws": "8.18.0"
   },
   "devDependencies": {
     "@raycast/eslint-config": "1.0.11",
-    "@types/node": "20.8.10",
+    "@types/node": "22.10.0",
     "@types/react": "18.3.12",
-    "eslint": "^8.57.1",
+    "eslint": "9.15.0",
     "prettier": "3.4.1",
-    "typescript": "^5.6.3"
+    "typescript": "5.7.2"
   },
   "scripts": {
     "build": "ray build -e dist",
